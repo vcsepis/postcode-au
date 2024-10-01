@@ -1,0 +1,23 @@
+{
+  "name": "postcode-au",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vcsepis/postcode-au.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/vcsepis/postcode-au/issues"
+  },
+  "homepage": "https://github.com/vcsepis/postcode-au#readme",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "express": "^4.21.0"
+  }
+}
