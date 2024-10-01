@@ -18,6 +18,7 @@
   "homepage": "https://github.com/vcsepis/postcode-au#readme",
   "dependencies": {
     "axios": "^1.7.7",
+    "axios-rate-limit": "^1.4.0",
     "compression": "^1.7.4",
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
