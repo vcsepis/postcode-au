@@ -4,37 +4,39 @@ const NodeCache = require('node-cache');
 const compression = require('compression');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const fetch = require('node-fetch'); // Ensure you have node-fetch installed
 
 // Initialize the app
 const app = express();
 
-// Enable CORS for all origins
+// Middleware
 app.use(cors());
-
-// Enable compression to reduce response size
 app.use(compression());
+app.use(express.json()); // Middleware to parse JSON payloads
 
-// Initialize NodeCache with a time-to-live (TTL) of 10 minutes
+// Initialize NodeCache
 const cache = new NodeCache({ stdTTL: 600, checkperiod: 120 });
 
-// Rate limit: 100 requests per 15 minutes per IP
+// Rate limit
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per windowMs
+    windowMs: 15 * 60 * 1000,
+    max: 100,
     message: 'Too many requests, please try again later.'
 });
 app.use(limiter);
 
-// Base URLs for APIs
+// API URLs
 const BASE_URL = 'https://api.easyship.com/api/v1/countries/14/postal_codes/';
 const ITEM_CATEGORIES_URL = 'https://public-api.easyship.com/2024-09/item_categories';
-
-// Authorization Token (Move to environment variable in production)
-const AUTH_TOKEN = 'prod_cKYBQyxX68ktfheZdUnAXwwjQcMcLIyZD5miKVymDH0=';
+const AUTH_TOKEN = 'prod_cKYBQyxX68ktfheZdUnAXwwjQcMcLIyZD5miKVymDH0='; // Hardcoded token
 
 // Route to fetch postal codes by ID
-app.get('/postal_codes/:id', async (req, res) => {
+app.get('/postal_codes/:id', async (req, res, next) => {
     const postalCodeId = req.params.id;
+
+    if (!/^\d+$/.test(postalCodeId)) {
+        return res.status(400).json({ error: 'Invalid postal code ID format' });
+    }
 
     const cachedData = cache.get(postalCodeId);
     if (cachedData) {
@@ -43,27 +45,21 @@ app.get('/postal_codes/:id', async (req, res) => {
     }
 
     const url = `${BASE_URL}${postalCodeId}`;
-
     try {
         const response = await axios.get(url, {
             headers: { 'Content-Type': 'application/json' },
             timeout: 5000
         });
-
         cache.set(postalCodeId, response.data);
-
         console.log(`Cache miss, fetched from API for postal code: ${postalCodeId}`);
         res.json(response.data);
     } catch (error) {
-        console.error(`Error fetching postal code ${postalCodeId}: ${error.message}`);
-        res.status(error.response ? error.response.status : 500).json({
-            error: error.response ? error.response.data : error.message
-        });
+        next(error);
     }
 });
 
-// Route to fetch HS codes (item categories)
-app.get('/hs-code', async (req, res) => {
+// Route to fetch HS codes
+app.get('/hs-code', async (req, res, next) => {
     try {
         const response = await axios.get(ITEM_CATEGORIES_URL, {
             headers: {
@@ -72,15 +68,101 @@ app.get('/hs-code', async (req, res) => {
             },
             timeout: 5000
         });
-
         console.log('Fetched item categories from Easyship API');
         res.json(response.data);
     } catch (error) {
-        console.error(`Error fetching item categories: ${error.message}`);
-        res.status(error.response ? error.response.status : 500).json({
-            error: error.response ? error.response.data : error.message
-        });
+        next(error);
     }
+});
+
+// Webhook route
+app.post('/webhook', async (req, res) => {
+    try {
+        const payload = req.body;
+
+        const trackingStatus = payload.tracking_status;
+        const platformOrderNumber = trackingStatus.platform_order_number || null;
+        const easyshipShipmentId = trackingStatus.easyship_shipment_id || 'Unknown Shipment ID';
+        const trackingStatusValue = trackingStatus.status || 'Unknown Status';
+        const trackingUrl = trackingStatus.tracking_page_url || 'No Tracking URL';
+
+        const apiURL = 'https://admin-shipping.epispost.com/api/webhooks/orders/easy-ship';
+
+        const response = await fetch(apiURL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+        const apiStatus = response.status;
+
+        const discordMessage = `
+**Shipment Tracking Notification - ${easyshipShipmentId}**
+Event Type: shipment.tracking.checkpoints.created
+Easyship Shipment ID: ${easyshipShipmentId}
+Platform Order Number: ${platformOrderNumber || 'Unknown Order Number'}
+Origin: AU
+Destination: AU
+Company Order Number: null
+Status: **${trackingStatusValue}**
+Tracking Number: ${trackingStatus.tracking_number}
+Tracking Page: ${trackingUrl}
+
+API Status:
+- ${apiURL} - Status: ${apiStatus}
+`;
+
+        const discordWebhookURL = 'https://discord.com/api/webhooks/1289491182782517299/el37SxJALwh5JEpC_FFegCHlunfo1GQPyKEgvtIiTNHZnreiLVTWZA6keQo1Hk1g-KCa';
+        await fetch(discordWebhookURL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                content: discordMessage,
+                embeds: [
+                    {
+                        title: `Shipment Tracking Notification - ${easyshipShipmentId}`,
+                        color: 0xff0000,
+                        fields: [
+                            { name: "Event Type", value: "shipment.tracking.checkpoints.created", inline: false },
+                            { name: "Easyship Shipment ID", value: easyshipShipmentId, inline: false },
+                            { name: "Platform Order Number", value: platformOrderNumber || 'Unknown Order Number', inline: false },
+                            { name: "Origin", value: "AU", inline: false },
+                            { name: "Destination", value: "AU", inline: false },
+                            { name: "Company Order Number", value: "null", inline: false },
+                            { name: "Status", value: trackingStatusValue, inline: false },
+                            { name: "Tracking Number", value: trackingStatus.tracking_number, inline: false },
+                            { name: "Tracking Page", value: trackingUrl, inline: false },
+                            { name: "API Status", value: `${apiURL} - Status: ${apiStatus}`, inline: false },
+                        ],
+                    },
+                ],
+            }),
+        });
+
+        return res.status(200).send('Payload forwarded and message sent to Discord');
+    } catch (error) {
+        const discordWebhookURL = 'https://discord.com/api/webhooks/1289491182782517299/el37SxJALwh5JEpC_FFegCHlunfo1GQPyKEgvtIiTNHZnreiLVTWZA6keQo1Hk1g-KCa';
+        await fetch(discordWebhookURL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                content: `Error: ${error.message}`,
+            }),
+        });
+
+        return res.status(200).send('Error occurred, but returning 200');
+    }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.message);
+    res.status(err.status || 500).json({ error: err.message });
 });
 
 // Handle graceful shutdown
@@ -89,7 +171,7 @@ process.on('SIGINT', () => {
     process.exit();
 });
 
-// Start the server on port 3000
+// Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
