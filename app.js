@@ -1,10 +1,8 @@
 const express = require('express');
-const axios = require('axios');
 const NodeCache = require('node-cache');
 const compression = require('compression');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
-const fetch = require('node-fetch'); // Ensure you have node-fetch installed
 
 // Initialize the app
 const app = express();
@@ -46,13 +44,19 @@ app.get('/postal_codes/:id', async (req, res, next) => {
 
     const url = `${BASE_URL}${postalCodeId}`;
     try {
-        const response = await axios.get(url, {
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 5000
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
         });
-        cache.set(postalCodeId, response.data);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        cache.set(postalCodeId, data);
         console.log(`Cache miss, fetched from API for postal code: ${postalCodeId}`);
-        res.json(response.data);
+        res.json(data);
     } catch (error) {
         next(error);
     }
@@ -61,15 +65,21 @@ app.get('/postal_codes/:id', async (req, res, next) => {
 // Route to fetch HS codes
 app.get('/hs-code', async (req, res, next) => {
     try {
-        const response = await axios.get(ITEM_CATEGORIES_URL, {
+        const response = await fetch(ITEM_CATEGORIES_URL, {
+            method: 'GET',
             headers: {
                 'accept': 'application/json',
                 'authorization': `Bearer ${AUTH_TOKEN}`
-            },
-            timeout: 5000
+            }
         });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+
+        const data = await response.json();
         console.log('Fetched item categories from Easyship API');
-        res.json(response.data);
+        res.json(data);
     } catch (error) {
         next(error);
     }
