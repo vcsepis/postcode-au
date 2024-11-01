@@ -96,7 +96,7 @@ app.post('/webhook', async (req, res) => {
         const trackingStatusValue = trackingStatus.status || 'Unknown Status';
         const trackingUrl = trackingStatus.tracking_page_url || 'No Tracking URL';
 
-        const apiURL = 'https://admin-shipping.epispost.com/api/webhooks/orders/easy-ship';
+        const apiURL = 'https://webhook-prod.myepis.cloud/api/v1/webhooks/shipping/orders/easy-ship/result';
 
         const response = await fetch(apiURL, {
             method: 'POST',
