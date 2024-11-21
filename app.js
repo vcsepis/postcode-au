@@ -151,7 +151,7 @@ app.post('/public-transport', async (req, res, next) => {
         const headers = {
             'Content-Type': 'application/json',
             'X-Goog-Api-Key': GOOGLE_API_KEY,
-            'X-Goog-FieldMask': 'routes.legs.steps.transitDetails',
+            'X-Goog-FieldMask': 'routes.*',
         };
 
         const payload = {
