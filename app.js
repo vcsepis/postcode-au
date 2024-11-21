@@ -1,26 +1,31 @@
+// Import required modules
 const express = require('express');
-const NodeCache = require('node-cache');
-const compression = require('compression');
-const cors = require('cors');
 const axios = require('axios');
+const NodeCache = require('node-cache');
+require('dotenv').config();
 
 // Initialize the app
 const app = express();
 
 // Middleware
-app.use(cors());
-app.use(compression());
-app.use(express.json()); // Middleware to parse JSON payloads
+app.use(express.json());
+app.use(require('cors')());
+app.use(require('compression')());
 
-// Initialize NodeCache
+// Initialize cache for postal codes
 const cache = new NodeCache({ stdTTL: 600, checkperiod: 120 });
 
-// API URLs
-const BASE_URL = 'https://api.easyship.com/api/v1/countries/14/postal_codes/';
+// Constants
+const POSTAL_CODE_BASE_URL = 'https://api.easyship.com/api/v1/countries/14/postal_codes/';
 const ITEM_CATEGORIES_URL = 'https://public-api.easyship.com/2024-09/item_categories';
-const AUTH_TOKEN = 'prod_cKYBQyxX68ktfheZdUnAXwwjQcMcLIyZD5miKVymDH0='; // Hardcoded token
+const EASYSHIP_API_KEY = process.env.EASYSHIP_API_KEY;
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+const FORWARDING_API_URL = 'https://webhook-prod.myepis.cloud/api/v1/webhooks/shipping/orders/easy-ship/result';
 
-// Route to fetch postal codes by ID
+// Routes
+
+// 1. Fetch postal codes by ID
 app.get('/postal_codes/:id', async (req, res, next) => {
     const postalCodeId = req.params.id;
 
@@ -35,7 +40,7 @@ app.get('/postal_codes/:id', async (req, res, next) => {
     }
 
     try {
-        const response = await axios.get(`${BASE_URL}${postalCodeId}`);
+        const response = await axios.get(`${POSTAL_CODE_BASE_URL}${postalCodeId}`);
         const data = response.data;
         cache.set(postalCodeId, data);
         console.log(`Cache miss, fetched from API for postal code: ${postalCodeId}`);
@@ -45,14 +50,14 @@ app.get('/postal_codes/:id', async (req, res, next) => {
     }
 });
 
-// Route to fetch HS codes
+// 2. Fetch HS codes
 app.get('/hs-code', async (req, res, next) => {
     try {
         const response = await axios.get(ITEM_CATEGORIES_URL, {
             headers: {
-                'accept': 'application/json',
-                'authorization': `Bearer ${AUTH_TOKEN}`
-            }
+                accept: 'application/json',
+                authorization: `Bearer ${EASYSHIP_API_KEY}`,
+            },
         });
         console.log('Fetched item categories from Easyship API');
         res.json(response.data);
@@ -61,17 +66,15 @@ app.get('/hs-code', async (req, res, next) => {
     }
 });
 
-// Webhook route for label events
-app.post('/webhook-label', async (req, res) => {
+// 3. Handle webhook for label events
+app.post('/webhook-label', async (req, res, next) => {
     try {
         const payload = req.body;
 
-        // Validate payload structure
         if (!payload.event_type || !payload.label) {
             return res.status(400).json({ error: 'Invalid payload format' });
         }
 
-        // Extract relevant fields
         const {
             event_type,
             resource_type,
@@ -82,24 +85,20 @@ app.post('/webhook-label', async (req, res) => {
                 status,
                 label_url,
                 tracking_number,
-                tracking_page_url
+                tracking_page_url,
             },
         } = payload;
 
-        // Forward payload to the additional API
-        const apiURL = 'https://webhook-prod.myepis.cloud/api/v1/webhooks/shipping/orders/easy-ship/result';
-        let apiResponseStatus;
-
+        // Forward payload to another API
+        let forwardingStatus;
         try {
-            const apiResponse = await axios.post(apiURL, payload);
-            apiResponseStatus = `Success - Status: ${apiResponse.status}`;
-            console.log('Payload forwarded to external API');
-        } catch (apiError) {
-            apiResponseStatus = `Failed - Status: ${apiError.response?.status || 'Unknown'} - Error: ${apiError.message}`;
-            console.error('Error forwarding payload to external API:', apiResponseStatus);
+            const forwardResponse = await axios.post(FORWARDING_API_URL, payload);
+            forwardingStatus = `Success - Status: ${forwardResponse.status}`;
+        } catch (err) {
+            forwardingStatus = `Failed - ${err.message}`;
         }
 
-        // Prepare embed for Discord
+        // Prepare and send Discord embed
         const discordEmbed = {
             content: null,
             embeds: [
@@ -107,50 +106,74 @@ app.post('/webhook-label', async (req, res) => {
                     title: `Label Event - ${easyship_shipment_id}`,
                     color: status === 'success' ? 0x00ff00 : 0xff0000,
                     fields: [
-                        { name: "Event Type", value: event_type, inline: true },
-                        { name: "Resource Type", value: resource_type, inline: true },
-                        { name: "Resource ID", value: resource_id, inline: true },
-                        { name: "Easyship Shipment ID", value: easyship_shipment_id, inline: false },
-                        { name: "Platform Order Number", value: platform_order_number, inline: false },
-                        { name: "Status", value: status, inline: true },
-                        { name: "Label URL", value: `[Download Label](${label_url})`, inline: false },
-                        { name: "Tracking Number", value: tracking_number, inline: true },
-                        { name: "Tracking Page", value: `[Track Shipment](${tracking_page_url})`, inline: false },
-                        { name: "API Forwarding Status", value: apiResponseStatus, inline: false },
+                        { name: 'Event Type', value: event_type, inline: true },
+                        { name: 'Resource Type', value: resource_type, inline: true },
+                        { name: 'Resource ID', value: resource_id, inline: true },
+                        { name: 'Easyship Shipment ID', value: easyship_shipment_id, inline: false },
+                        { name: 'Platform Order Number', value: platform_order_number, inline: false },
+                        { name: 'Status', value: status, inline: true },
+                        { name: 'Label URL', value: `[Download Label](${label_url})`, inline: false },
+                        { name: 'Tracking Number', value: tracking_number, inline: true },
+                        { name: 'Tracking Page', value: `[Track Shipment](${tracking_page_url})`, inline: false },
+                        { name: 'API Forwarding Status', value: forwardingStatus, inline: false },
                     ],
                 },
             ],
         };
 
-        const discordWebhookURL = 'https://discord.com/api/webhooks/1299383213222920192/n2Jv5ASi0_FIOK2nLxuqxhzIDOsNIgGK5PJbaXM9xRcnNu-UWnSX3x9Ejkjo5qvvwsbI';
-
-        // Send to Discord webhook
-        await axios.post(discordWebhookURL, discordEmbed);
-        console.log('Sent to Discord webhook');
-
-        return res.status(200).send('Payload sent to Discord and external API');
+        await axios.post(DISCORD_WEBHOOK_URL, discordEmbed);
+        res.status(200).send('Payload processed successfully');
     } catch (error) {
-        console.error('Error handling webhook-label:', error.message);
+        next(error);
+    }
+});
 
-        const discordWebhookURL = 'https://discord.com/api/webhooks/1299383213222920192/n2Jv5ASi0_FIOK2nLxuqxhzIDOsNIgGK5PJbaXM9xRcnNu-UWnSX3x9Ejkjo5qvvwsbI';
-        await axios.post(discordWebhookURL, {
-            content: `Error: ${error.message}`,
-        });
+// 4. Fetch public transport routes
+app.post('/public-transport', async (req, res, next) => {
+    try {
+        const {
+            origin,
+            destination,
+            arrivalTime,
+            travelMode,
+            computeAlternativeRoutes,
+            transitPreferences,
+        } = req.body;
 
-        return res.status(200).send('Error occurred, but returning 200');
+        if (!origin || !destination || !arrivalTime || !travelMode || !transitPreferences) {
+            return res.status(400).json({
+                error: 'Missing required fields: origin, destination, arrivalTime, travelMode, transitPreferences.',
+            });
+        }
+
+        const googleApiUrl = 'https://routes.googleapis.com/directions/v2:computeRoutes';
+
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': GOOGLE_API_KEY,
+            'X-Goog-FieldMask': 'routes.legs.steps.transitDetails',
+        };
+
+        const payload = {
+            origin,
+            destination,
+            arrivalTime,
+            travelMode,
+            computeAlternativeRoutes,
+            transitPreferences,
+        };
+
+        const response = await axios.post(googleApiUrl, payload, { headers });
+        res.status(200).json(response.data);
+    } catch (error) {
+        next(error);
     }
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error(err.message);
-    res.status(err.status || 500).json({ error: err.message });
-});
-
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-    console.log('Shutting down server...');
-    process.exit();
+    res.status(err.response?.status || 500).json({ error: err.message, details: err.response?.data || null });
 });
 
 // Start the server
